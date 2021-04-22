@@ -1,0 +1,19 @@
+* Whenever designing a large system, we need to consider a few things:
+    - What are the different architectural pieces that can be used?
+    - How do these pieces work together?
+    - How can we best utilize these pieces? What are the correct tradeoffs?
+
+* Investing in scalaing before need is not a good business proposition. However, 
+  some foresight in the design can save valuable time and resources in the future.
+
+* Important concepts:
+    - consistent hashing
+    - CAP Theorem
+    - Load Balancing
+    - Caching
+    - Data partitioning 
+    - Indexes
+    - Proxies
+    - Queues
+    - Replication
+    - SQL vs. NoSQL

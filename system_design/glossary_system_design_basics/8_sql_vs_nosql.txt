@@ -1,0 +1,117 @@
+* Two main types of databases:
+    - SQL - relational databases
+    - NoSQL - non relational databases
+    - Differ in:
+        * how built
+        * information stored
+        * data storage used
+
+
+* SQL
+    - Structured storage with predefined schema
+    - i.e. like schema of phonebook with names and numbers
+    - store data in rows/cols
+    - row is one attribute and col is all data points
+    - Popular relational databses:
+        * MySQL, Oracle, MS SQL Server, SQLite, Postgres, MariaDB
+
+
+* NoSQL
+    - Unstuctured, distributed, dynamic schema
+    - i.e. file folders that hold everything from address/phone number/likes/dislikes/shopping preferences
+    - Key-Value Stores: 
+        * data stored in array of key-value pairs
+        * 'key' is an attribute name that is linked to a value
+        * examples: Redis, Voldemort, Dynamo
+    - Document Databases:
+        * Data saved in documents (as opposed to row/cols)
+        * Documents saved in collections
+        * Each document can have an entirely different structure
+        * examples: CouchDB, MongoDB
+    - Wide-Column Databases:
+        * Instead of 'tables', in columnar databses, have column families which are containers for rows
+        * Unlike relational databases, don't need to know all of the columns beforehand
+        * Unlike relational databses, each row doesn't need the same number of columns 
+        * Best suited for analyzing big datasets
+        * examples: Cassandra, HBase
+    - Graph Databases:
+        * Store data whose relationships are best represented by a graph
+        * Data saved in graph structure with nodes, properties, and lines.
+          (entities, information about the entities, and connection between entities)
+        *  examples: Neo4j, InfiniteGraph
+
+
+* High level differences between SQL and NoSQL
+    - Storage:
+        * SQL stores in tables (rows/col)
+            - I.E. if rows are different cars, columns might be 'make','color','model',etc.
+        * NoSQL store in different methods:
+            - document, graph, key-value, columnar 
+    - Schema:
+        * SQL needs fixed schema. Schema must be defined before creating databse.
+          Each row needs every column. Can modify schema, but must take entire database offline.
+        * NoSQL schemas are dynamic. Columns can be added on the fly. 
+          Each row doesn't need a value for each column
+    - Querying:
+        * SQL uses (structured query language) for defining and manipluating data.
+          This is very powerful.
+        * NoSQL queries are focused on a collection of documents. It can sometimes
+          be called UnQL (unstructured query language). Different databases have
+          different syntax for UnQL.
+    - Scalabilitiy:
+        * SQL, in most common situations, SQL databases are vertically scalable:
+            - i.e. by increasing memory, hardware, cpu, etc. -> Expensive
+            - Difficult and time consuming to scale across multiple servers
+        * NoSQL databases are horizontally scalable.
+            - Can add more servers to handle more traffic. 
+            - Can use cheap commodity hardware or cloud instances -> Cost Effective
+            - Many NoSQL technologies automatically distribute data over servers automatically
+    - Reliability or ACID Compliancy (Atomiticity, Consistency, Isolation, Durability)
+        * SQL -> Vast majority of SQL databases are ACID compliant 
+            - Gives best data reliabilitiy and safe guarantee of performing transactions
+        * NoSQL -> sacrifice ACID compliance for performance and scalability
+
+
+* SQL vs. NoSQL - Which ones to use?
+    - No one size fits all solutions
+    - businesses rely on both SQL and NoSQL databases working together
+    - Even as NoSQL databases are becoming popular for their speed and scalability,
+      there are many situations where highly structured SQL databse may perform better
+    - Choosing right technologies hings on the use case!
+    - Reasons to use SQL database:
+        * Need to insure ACID compliance
+            - ACID compliance reduces anomalies and protects integrity of 
+              database by prescribing exactly how transactions interact with the databse.
+            - Many e-commerce and financial applications, ACID compliant databases preferred
+              over speed and scalabilitiy and processing speed given by by NoSQL
+        * Data is structured and unchanging
+            - I.E. business is not experiencing tremendous growth that requires more servers
+              and data is consistent, then no reason to use system designed to support
+              a variety of data types and high traffic volume
+    - Reasons to use NoSQL databse:
+        * When all other components of our application are fast and seamless,
+          NoSQL prevents data from being the bottleneck
+        * Big Data contributes to a large success for NoSQL databases because
+          NoSQL databases handle data differently 
+        * Examples: Cassandra, MongoDB, CouchDB, HBase
+        * Storing large volumes of data that often have little to no structure
+            - NoSQL puts no limit on the type of data we store together and
+              allows us to add new types as the need changes.
+            - With document based databases, you can store data in one place without
+              having to define the "types" of data those are in advance.
+        * Making the most out of cloud computing and storage
+            - Cloud based storage is an excellent cost-saving solution but
+              requires data to be easily spread across multiple servers to scale up.
+            - Using commodity (affordable, smaller) hardware on-site on in the cloud
+              saves you the hassle of additional software.
+            - NoSQL technology, i.e. Cassandra, is designed to be scaled across multiple
+              data centers out of the box, without a lot of headaches.
+        * Rapid Development
+            - NoSQL is extremely useful for rapid development as it doesn't need to be
+              prepped ahead of time.
+            - If making quick iterations of your system which requires making 
+              frequent updates to the datastructure without a lot of downtime between
+              versions, a relational database will slow you down.
+
+
+

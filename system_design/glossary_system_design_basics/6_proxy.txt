@@ -1,0 +1,43 @@
+* A proxy server is an intermediate server between the client and the 
+  back-end server
+* A client talks to proxy server first to request anything like a web page,
+  file, connection, etc.
+* Proxies are used to filter requests, log requests, or sometimes transform 
+  requests (add/remove headers, encrypt/decrypt, compression)
+* Proxie's cache can serve a lot of requests. 
+* If many clients request something very frequenctly, then proxy server can
+  serve that requests from the cache instead of having to retreive it from the
+  remove server.
+
+client
+client ---> proxy server ---> web ---> back-end server
+client
+
+* Proxy server types
+    - Proxy can live on client's local server or anywhere between the client
+      and the remote server.
+    - Open Proxy
+        * A proxy server accessible by any internet user.
+        * Typically a proxy server only allows users within a network
+          group (i.e. a closed proxy) to store and forward internet services
+          such as DNS or web pages to reduce and control the bandwidth 
+          used by the group.
+        * With an open proxy, however any user on the internet is able to use this
+          forwarding service.
+        * Anonymous Proxy
+            - Go through the proxy to make it look like originating ip is from 
+              the anon proxy 
+        * Transparent Proxy
+            - "A 'transparent proxy' is a proxy that does not modify the request 
+               or response beyond what is required for proxy authentication and 
+               identification"
+            - Also known as an intercepting proxy, inline proxy, or forced proxy, 
+              a transparent proxy intercepts normal application layer communication 
+              without requiring any special client configuration. Clients need not be 
+              aware of the existence of the proxy
+
+* Reverse proxy
+    - A reverse proxy retrieves resources on behalf of a client from one or 
+      more servers.
+    - These resources are returned to the client appearing as they 
+      originated from the proxy.

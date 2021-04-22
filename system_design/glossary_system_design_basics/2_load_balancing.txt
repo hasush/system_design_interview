@@ -1,0 +1,57 @@
+* Load balancer (LB) is another critical component any distributed system
+* Spread traffic across cluster of servers to improve responsiveness and availability 
+  of applications, websites, or databases.
+* Keeps track of status of all the resources while distributing requests.
+    - If server  is not available to take new requests, or is not responding, or
+      has an elevated error rate, LB will stop sending traffic to that server.
+* Typically LB sits between client and the server accepting incoming network and
+  application traffic and distributing the traffic across multiple backend servers
+  using various algorithms.
+* By balancing application requests across many servers, LB reduces individual 
+  server load and prevents any one application server from becoming a single
+  point of failure, thus improving overall availability and responsiveness.
+
+
+client --> internet --> load balancer --> servers
+
+or
+
+(for full scalabilitiy and redundancy)
+client --> internet --> LB --> web servers --> LB --> application servers --> LB --> databases
+
+* Benefits of load balancing
+    - Users experience faster uninterrupted service. Users won't have to wait for
+      a single struggling server to finish its previous tasks. Instead, their
+      requests are immediately passed on to a more readily available resource.
+    - Server providers experience less downtime and higher throughput. Even a server
+      failure won't affect the end user experience as LB will route to healthy server.
+    - LB makes it easier for system admins to handle incoming requests while decreasing
+      wait time for users.
+    - Smart LB provide benefits like predictive analytics that determine traffic
+      bottlenecks before they happen. As a result, a smart LB gives an organization
+      acctionable insights. These are key to automation and can help drive business
+      decisions.
+    - System admins face few failed or stressed componenets. Instead of a single device
+      performing a lot of work, LB has several devices perform a little bit of work.
+
+* How does a LB choose between a backend server? It makes sure it is healthy
+  and responding to periodic health requests and then uses algorithm to determine which server
+  to send request to.
+    - Least Connection
+        Request is sent to server with the least number of connections. Good algorithm
+        if a lot of persistent connections.
+    - Least Reponse Time
+        Request is sent to server with the least number of connections and fastest 
+        response time.
+    - Least Bandwidth
+        Request is sent to server with the most available bandwidth (least amount of traffic in MBps)
+    - Round Robin
+        If server healthy, then send to server current%N, increment current
+    - Weighted Round Robin
+        Servers that can handle more are visited more often.
+    - IP hash
+        Compute hash of client IP and send request to appropriate server. 
+
+
+* Redundant Load Balancers: multiple LB in same stack, they monitor each other. If one fails,
+  the other one takes over.

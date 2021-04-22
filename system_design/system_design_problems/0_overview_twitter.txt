@@ -1,0 +1,95 @@
+Step 1: Requirement Clarifications 
+
+* Will users be able to post tweets and follow people?
+* Should we create a system to display the user's timeline?
+* Will tweets contain photos and videos?
+* Are we focusing on the backend only, or the frontend as well?
+* Will users be able to search tweets?
+* Do we need to display hot trending topics?
+* Will there be a push notification for hot or trending tweets?
+
+Step 2: Back of the envelope calculations
+
+* What scale is expected from the system?
+    - Number of tweets
+    - Number of tweet views
+    - Number of timeline generations per second
+    - etc.
+* How much storage do we need? We will have different requirements if photos and videos can be saved.
+* What network bandwidth usage are we expecting? -> Crucial for understanding how to manage traffic and balance load between servers
+
+Step 3: System inferface definition
+
+* Define what APIs are expected from the system.
+* This defines contract expected from the system and helps us check if we have any requirements wrong.
+* Examples:
+    - postTweet(user_id, tweet_data, tweet_location, user_location, timestamp)
+    - generateTimeline(user_id, current_time, user_location)
+    - markTweetFavorite(user_id, tweet_id, timestamp)
+
+Step 4: Defining data model
+
+* Define data model early -> clarifies how data flows from one part of the system to another
+* Later, it defines data partioning and management.
+* The candidate should identify:
+    - various entities of the system
+    - how they will interact with each other
+    - different aspects of data management:
+        * storage
+        * transportation
+        * encryption
+    - entity examples:
+        * User:
+            - UserID, name, email, dob, CreationData, LastLogin
+        * Tweet:
+            - tweet_id, content, tweet_location, number_of_likes, timestamp
+        * UserFollow:
+            - UserID1, userID2, etc.
+        * FavoriteTweets:
+            - userID,TweetID,TimeStamp
+* Which database should we use?
+    - NoSQL like Cassandra best fir our needs?
+    - MySQL-like solution?
+    - What kind of block storage should we use to store photos and videos?
+
+Step 5: High-level design
+
+* Draw a block diagram with 5-6 boxs representing the core componenets of our system.
+* Identify enough componenets to solve the problem from end to end.
+* We will need multiple application servers to serve all the read/write requests with load balancer 
+  in front of them for traffic distribution.
+* If num read >> num write -> Have special application servers for reads
+* On the back end, need file storage for photos/videos and database to store and retrieve tweets (huge read operations)
+
+                             application_servers  <---> database      
+client --> load_balancer --> application_servers 
+                             application_servers  <---> file storage
+
+Step 6: Detailed design
+
+* Dig deeper into two or three componenets.
+* Interviewer's feedback should guide one into what part of the system needs further discussion.
+* Present different approaches, their pros and cons, and explain why we would prefer one approach vs. another.
+* Consider tradeoffs while keeping system contraints in mind.
+==>
+    * Since we will be storing as massive ammount of data, 
+      how should we partition our data to distribute it to multiple databses?
+      Should we store all data for a user in the same database? What issues might this cause?
+    * How will we handle hot users who tweet a lot or follow lots of people?
+    * Since user's timelines will contain the most recent (and relevant) tweets, should we try 
+      to store data so that it is optimized in scanning the latest tweets?
+    * How much and at which layer should we introduce cache to speed things up?
+    * what componenets need better load balancing?
+    
+Step 7: Identifying and resolving bottlenecks
+* Try to discuss as many bottlenecks as possible and different approaches to mitigate them.
+* If there are any single points of failure within our system, what are we doing to mitigate it?
+* Do we have enough replicas of our data that we can still serve our users if some servers fail?
+* Do we have enough copies of services so that a few failures would not cause an entire system wide shutdown?
+* How are we monitoring the performance of our service? 
+  Do we get alerts whenever criticial componenets fail or their performance degrades?
+
+SUMMARY
+
+Preparation and being organized during the interview are the keys to success in system design interviews.
+The steps mentioned above should help to keep on track and cover all aspects while designing a system.

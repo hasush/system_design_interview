@@ -1,0 +1,43 @@
+* CAP == Consistency, Availability, Partition Tolerance 
+* CAP theorem states that it is impossible for a distributed system to 
+  provide more than two of Consistency, Availability, and Partition Tolerance
+* When designing distributed system, must decide which two we want
+
+* Consistency
+    - All nodes see same data at the same time 
+    - Consistency is acheived by updating all nodes before read
+
+* Availability 
+    - Every reponse gets a success/failure
+    - Availability is acheived by replicating data across different servers
+
+* Partition Tolerance
+    - The system continues to work despite message loss or partial failure 
+    - A partition-tolerant system can sustain any amount of network failure 
+      that doesn't result in a failure of the entire network.
+    - Data is sufficiently replicated across combination of nodes and networks
+      to keep the system up through intermittent outages 
+
+* We cannot build a general data store that is continually available, sequentially
+  consistent, and tolerant to any partition failures. Can only build with 2 properties
+    - To be consistent --> all nodes should see the same set of updates in the same order
+      but if network loses a partition, updates in one partition might not make it
+      to the other partitions before a client reads from the out-of-date partition
+      after having read from the up-to-date one. The only thing that can be done to
+      cope with this possibility is to stop serving requests from the out-of-date
+      partition, but then the service is not 100% available. 
+
+
+* Consistency
+    - All users see the same data at the same time
+
+* Availability
+    - System continues to work even with node failures
+
+* Partition Tolerance
+    - System continues to function even if the communication fails between nodes 
+
+A ^ C == relational databases
+A ^ P == Cassandra, CouchDB
+C ^ P == BigTable, MongoDB, HBase
+C ^ A ^ P == empty 

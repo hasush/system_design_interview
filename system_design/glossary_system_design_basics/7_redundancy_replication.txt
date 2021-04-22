@@ -1,0 +1,12 @@
+* Redundancy is the duplication of critical components of functions of a system
+  with the intention of increasing the reliability of the system, usually
+  in the form of a backup or failsafe, or to improve actual system performance.
+    - I.E. if something goes down ... have another to replace
+    - I.E. if something is being utlized a lot ... have another to offer more resoureces
+* Redundancy removes single points of failure in a system. 
+
+* Replication means sharing information to ensure consistency between redundant 
+  resources, such as software or hardware componenets, to improve reliability,
+  fault-tolerance, or accessibility.
+* Primary server gets all updates, and then replicates that information
+  on the redundant servers. 

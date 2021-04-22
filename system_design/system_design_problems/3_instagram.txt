@@ -1,0 +1,347 @@
+* What is instagram?
+    - Social networking service that enables users to upload and share their
+      photos and videos with other users. 
+    - Can share information publically or privately.
+    - Anything shared publically can be seen by all users, while privately 
+      shared material can only be seen by those who have been shared with.
+    - Instagram also enables users to share through other social networking 
+      platforms such as Facebook, Twitter, Flickr, and Tumblr. 
+    - Will design a simple version of Instagram that allows people to share
+      photos and follow other users.
+    - The "News Feed" for each user will consist of top photos of all
+      the people the user follows.
+
+
+* Requirements and goals of the system
+    - Functional Requirements
+        * User should be able to upload/download/view photos 
+        * User can perform searches based on photo/video titles. 
+        * User can follow other users. 
+        * System should generate and display a user's New Feed consisting 
+          of top photos from all the people the user follows 
+    - Non-Functional Requirements 
+        * Our service needs to be highly available 
+        * Acceptable latency for News Feed generation is 200ms
+        * Consistency can take a hit (in the interest of availability)
+          if a user doesn't see a photo for a while; it should be fine 
+        * System should be highly reliable; any uploaded photo or video
+          should never be lost 
+    - Not in scope:
+        * adding tags to photos, searching photos on tags, commenting on photos,
+          tagging user to photos, who to follow, etc.
+
+
+* Some Design Considerations 
+    - System will be read heavy, so will focus on building a system that
+      can retreive photos quickly 
+    - User will be able to upload as many photos as they like, therefore
+      efficient management of storage should be crucial factor in 
+      designing the system 
+    - Low latency is expected when viewing photos 
+    - Data should be 100% reliable. If a user uploads a photo, system should 
+      guarantee that it will never be lost.
+
+
+* Capacity Estimation and Constraints (photos)
+    - 500e6 total users, and 1e6 daily active users
+    - 2 photos/user per day 
+      --> 2e6 photos/day = 2e6/(24*3600) ~= 20 photos/sec 
+    - Avg photo size = 200 kB
+    - Total Space for 1 day 
+      --> 200kB*2e6=4*e(5+6)= 400 GB
+    - Total Space for 10 years
+      --> 10*365*400 GB ~= 1425 TB
+
+
+* High Level System Design 
+    - Need to support two scenarios: upload photo and look at photo 
+    - Need object storage and metadata storage 
+
+    client ---- upload --------> Image Hosting System <---> image storage
+                                  ^           ^
+                                  |           |
+    client <--- view/search ------|           |------> image metadata 
+
+
+* Database Schema 
+    - Need to store data about users, uploaded photos, and the people they follow 
+    - Photo table will store all data related to a photo. We need an index on PhotoID
+      and CreationDate since we need to fetch recent photos first. 
+
+    Photo                           User: int                   UserFollow 
+PK  PhotoID: int                PK  UserID: int             PK  UserID1: int
+    UserID: int                     Name: varchar(20)       PK  UserID2: int        
+    PhotoPath: varchar(256)         Email: varchar(32)
+    PhotoLatitude: int              DateOfBirth: datetime 
+    PhotoLongitude: int             CreationDate: datetime 
+    UserLatitude: int               LastLogin: datetime 
+    UserLongitude: int 
+    CreationDate: datetime 
+
+    - A straightforward approach for storing the above schema would be to use 
+      a relational database management system (RDBMS) since we require joins.
+    - But relational databases have many problems when we need to scale them.
+    - We can store photos in a distributed file storage like HDFS or S3
+    - We can also store the above schemas in a distributed key-value store
+      to enjoy the benefits offered by NoSQL. 
+    - All the metadata related to photos can go to a table where the 'key'
+      would be the 'PhotoID' and the 'value' would be an object containing 
+      PhotoLocation, UserLocation, CreationTimestamp, etc.
+    - If we go with a NoSQL database, would need an additional table to store 
+      relationshps between users and which photos they own. We can 
+      this table "UserPhoto"
+
+        UserPhoto
+    PK  UserID: int
+        PhotoID: int
+
+    - For both "UserFollow" and "UserID", could use a wide-column datastore like
+      Cassandra. For "UserPhoto" table, the "key" would be "UserID" and the "value"
+      would be the list of "PhotoIDs" the user owns, stored in different columns.
+      We will have a similar scheme for the "UserFollow" table. 
+    - Cassandra or key-value stores, in general, always maintain a certain number 
+      of replicas to offer reliability. Also, in such data stores, deletes don't 
+      get applied instantly; data is supported for certain days (to support 
+      undeleting) before getting remove from the system permanently. 
+
+
+* Data Size Estimation  (metadata)
+    - Estimate how much data will go into each table and how much data we need 
+      to store for 10 years.
+    - User
+        * Assume each "int" and "dataTime" is four bytes, each row 
+          in the table will be 68 bytes:
+            - 4 + 20 + 32 + 4 + 4 + 4 = 68 bytes
+        * 500e6 active users:
+            - 500e6 * 68 bytes = 32e9 bytes = 32 GB 
+    - Photo
+        * Each photo row will be 284 bytes 
+            - 4*7 + 256 = 284 bytes 
+        * If 2M new photos each day, we will need 
+            - 2e6 * 284 bytes ~= 0.5 GB/day 
+        * For 10 years, we will need
+            - 0.5 * 10 * 365 ~= 2 TB of storage 
+    - Userfollow 
+        * 8 bytes per row 
+        * Assume 500 follows per user 
+        * 8*500*500e6 active users = 2e12 = 2 TB 
+    - Total for User+Photo+Userfollow metadata 
+        * 32 GB + 2TB + 2 TB = 4 TB 
+
+
+* Componenet Design 
+    - Photo uploads (writes) can be slow as they have to wriet to disk but 
+      photo views (reads) should be very fast, especially if being served from cache. 
+    - Uploading users can consume all the available connections, as uploading 
+      is a slow process. 
+    - If uploads consume all the resources, then reads won't be able to be done. 
+    - Should keep in mind that web servers have a connection limit before designing 
+      our system. 
+    - If web server can have a maximum of 500 connections at a time, then it can't 
+      have more than 500 concurrent uploads or reads. 
+    - To handle this, we can split reads and writes into separate services.
+    - Will have dedicated servers for reads and dedicated servers for writes. 
+    - Separating reads and writes will allow us to separately scale the system. 
+
+    client --- upload images ---> upload image server ---> image storage <----|
+                                         |                                    |
+                                         |                                    |
+                                         |--------------> image metadata      |
+                                                                ^             |
+                                                                |             |
+                                                                |             |
+    client <--- view/search ----> download image server <-------|             |
+                                           ^                                  |
+                                           |                                  |
+                                           |-----------------------------------
+
+
+* Reliability and Redundancy 
+    - Losing files is not an option for our service
+    - Therefore, will store multiple copies of each file so that if one
+      storage server dies, we can retrieve the photo from the other 
+      copy present on a different storage server. 
+    - The same principle also applies to other componenets of the system.
+    - If we want to have high availability for the system, we need to make sure 
+      replicas exist for the various componenets, so that if one of them goes 
+      down we still have others running. 
+    - Redundancy removes single points of failure from the system 
+    - If only one instance of a service is required to run at any point,
+      we can run a redundant secondary copy of the service that is not serving 
+      any traffic, but it can take control after failover when the primary 
+      has a problem. Failover can also happen without full service failure. I.E.
+      a degradation in the performance of the system.
+
+                                                                    |--->image storage backup i
+                                                                    |
+                                                                    |--->image storage backup j
+                                                                    |
+    client --- upload images i ---> upload image server ---> image storage <----|
+               upload images j             |                                    |
+                                           |                image metadata      |
+                                           |                   backup   ^       |
+                                           |                            |       |
+                                           |                            |       |
+                                           |--------------> image metadata      |
+                                                                  ^             |
+                                                                  |             |
+                                                                  |             |
+    client <--- view/search i ---->   download image server <-----|             |
+                view/search j                ^                                  |
+                                             |                                  |
+                                             |-----------------------------------
+
+
+* Data sharding (metadata sharding)
+    - Partitioning based on UserID 
+        * Let's assume we shared based on "UserID" so we can keep all photos 
+          of a user on the same shard. If one DB shard is 1TB, we will need four 
+          shards to store 4 TB. Let's assume for better performance and scalabilitiy
+          we keep 10 shards. 
+        * So can find shard number by UserID%10 and then store the data there. 
+        * To uniquely identify any photo within the DB, we can append the shard 
+          number with each PhotoID. 
+        * How can we generate PhotoIDs?
+            - Each DB shard can have its own auto-increment sequence for PhotoIDs, and
+              since we will append ShardID with each PhotoID, it will make it unique throughout
+              our system. 
+        * What are the different issues with this partitioning scheme?
+            - How would we hand hot users? Many people follow such hot users, and a lost
+              of other people see any photo they upload. 
+            - Some users will have a lot of photos compared to othes, thus making
+              a non-uniform distribution of storage. 
+            - What if we cannot store all pictures of a user on one shard? If we distribute 
+              photos of a user onto multiple shards, will it cause high latencies?
+            - Storing all photos of a user on one shard can cause issues like unavailability
+              of all of the user's data if that shard is down or high latency if it 
+              is serving high load, etc. 
+    - Partitioning based on PhotoID 
+        * Generate unique photoIDs
+        * Find a shard via PhotoID%10
+        * No need to append ShardID to PhotoID in this case 
+        * How can we generate PhotoIDs?
+            - Here, we cannot have an auto-incrementing sequence in each shard 
+              to define PhotoID because we need to know PhotoID first to find
+              the shard where it will be stored. 
+            - One solution would be to have a separate database instance to
+              generate auto-incrementing IDs. 
+            - If our PhotoID can fit into 64 bits, we can define a table 
+              containing only a 64 bit ID field. So whenever we would like to
+              add a photo in our system, we can insert a new row in this 
+              table and take that ID to be our PhotoID of the new photo. 
+        * Wouldn't this key generating DB be a single point of failure?
+            - Yes 
+            - Could have two databases, one for evens and one for odds. 
+            - Add LB infront to round robin the load. 
+            - Even if one goes down, no issue because no clash b/w even/odd
+            - We can extend this design by defining separate ID tables 
+              for Users, Photo-Comments, or other objects present in our system 
+        * Alternate: key generation scheme (i.e. KGS) similar to tinyurl
+        * How can we plan for the future growth of our system?
+            - We can have a large number of logical partitions to accomodate 
+              future data growth, such that in the beginning, multiple logical 
+              partitions reside on a single physical database server. 
+            - Since each database server can have multiple databse instances 
+              running on it, we have separate databases for each logical 
+              partition on any server. 
+            - So wheenver, we feel that a particular database server has a lot of data,
+              we can migrate some logical partitions from it to another server. 
+            - We can maintain a config file (or a separate database) that can map
+              our logical partitions to database servers; thsi will enable us to 
+              move parititions around easily. 
+            - Whenever we want to move a partition, we only have to update the
+              config file to announce the change. 
+
+
+* Ranking and News Feed Generation 
+    - To create a news feed for a user, we need to fetech the latest, most popular,
+      and relevant photos of the people the user follows. 
+    - For simplicity, assume we need to fetch the top 100 photos for a user's
+      News Feed.
+    - Our application server will fetch all the users a person follows and then
+      get metadata for each users last 100 photos. 
+    - In final step, ranking server will submit all photos to algorithm to get 
+      top 100 photos (based on recency, likeness, etc.) and return them to 
+      the user. 
+    - A possible problem with this approach would be higher latency as we have 
+      to query multile tables and perform sorting/merging/ranking on the results.
+    - To improve efficiency, we can pre-generate the news feed and 
+      store it in a separate table. 
+    - Pregenerating the News Feed
+        * We can have dedicated servers pregenerating User's news feed and storing 
+          them in a "UserNewsFeed" table. So whenever any user needs the latest photos 
+          for their News-Feed, we can simple query this table and return the results to
+          the user. 
+        * Whenever these servers need to generate the News Feed of a user, they will
+          first query the UserNewsFeed table to find the last time the News Feed was
+          generated for that user. Then, new News-Feed data will be generated from
+          that time onwards (following the steps mentioned above).
+    - What are the different approaches for sending News Feed contents to the users?
+        * Pull 
+            - Clients pull the News-Feed contents from server at a regular 
+              interval or manually whenever they need it.
+            - Possible with this approach are:
+                * New data might not be shown to user until clients issue a pull request 
+                * Most of the time, pull requests will result in an empty response if there is 
+                  no new data. 
+        * Push
+            - Servers can puch new data to the users as soon as it is available.
+            - To efficiency manage this, users have to maintain a LongPoll request 
+              with the server for receiving the updates. 
+            - A possible problem with this approach is a user who follows a lot
+              of people or a celebrity who has millions of followers. In this case,
+              the server has to push updates quite frequently.
+        * Hybrid
+            - Can move all users who have a high number of followers to a pull-based
+              model and only push data to those who have a few hundred (or thousand)
+              follows.
+            - Another approach could be that the server pushes updates to all the Users
+              not more than a certain frequency and letting users with a lot of 
+              followers/updates to pull data regularly. 
+
+
+* News Feed Creation with Sharded Data 
+    - One of the most important requirements to create the News Feed for
+      any given user is to fetech the latest photos from all people the
+      user follows.
+    - For this, we need to have a mechanism to sort photos on their time
+      of creation. 
+    - To efficiently do this, we can make photo creation time part of the 
+      PhotoID.
+    - As we will have a primary index on photoID, it will quite quick to
+      find the latest PhotoIDs.
+    - We can use epoch time for this. 
+    - Let's say our PhotoID will have two parts
+        * The first part will be representing epoch time 
+        * The second part will be an auto-incrementing sequence 
+    - So to make a new PhotoID, we can take the current epoch time
+      and append an auto-incrementing ID from our key-generating DB.
+    - We can figure out the shard number from this PhotoID (PhotoID%10)
+      and store the photo there. 
+    - What could be the size of our PhotoID?
+        * Lets say our epoch time starts today; how many bits we would need
+          to store the number of seconds for the next 50 years?
+            - 24*3600*365*50 = 2e9 seconds 
+        * We would need 31 bits to store this number. 
+        * Need remove for the auto incrementing solution. Use 9 bits
+          so that 31+9=40bits=5 bytes of data.
+        * So every second, we can store 2**9 = 512 new photos. 
+        * Since on average, we are expecting 23 new photos a second, we have 
+          more than plenty of room to satisfy this need. 
+        * We can reset our auto-incrementing sequence every second. 
+        * See "Data Sharding" in 6_twitter.txt 
+
+* Cache and Load Balancing 
+    - Our service would need a massive-scale photo delivery system to serve 
+      globally distributed users.
+    - Service should push its content closer to the user using a large number 
+      of geographically distributed photo cache servers and use CDNs (Content Delivery Network)
+    - We can introduce a cache for metadate servers to cache hot database rows.
+    - We can use Memcache to cache the data and application servers before hitting
+      the database, can quickly check if the cache has desired rows.
+    - LRU can reasonable cache eviction policy.
+    - How to build more intelligent cache?
+        * Use 80/20 rule --> 20% of daily read volume for photos
+          is generating 80% of traffic, which means certain photos are so popular 
+          that most people read them. This dictates we can try caching 20%
+          of the dailry read volume of photos and metadata. 

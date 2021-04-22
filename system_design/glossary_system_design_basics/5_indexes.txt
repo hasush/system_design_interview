@@ -1,0 +1,49 @@
+* When database performance not satisfactory, turn on indexes
+* Goal of creating an index on a particular tabel in a datbase is to
+  make it faster to search the table and find the row or rows
+  we want.
+* Indexes created using one or more columns of a database table
+  providing the basis for both rapid and random lookups
+  and efficient access of ordered records.
+* A database index is a data structure that improves the speed of
+  data retrieval operations on a database table at the cost of
+  additional writes and storage spaces to maintain the index
+  data structure. 
+
+* Example: Library Catalog
+    - list of books in Library
+    - Title - Writer - Date
+    - Could organize by Title
+    - Could organize by Writer
+    - Based on organization could look up the thing you were interested
+      in to rapidly find the book 
+    - An index is a data structure that can be perceived as a table
+      of contents that poitns us to the location where actual data
+      lives.
+    - When we create an index on a column with save those column keys
+      and use pointers to go back to the entire row.
+    - This enables fast searching for those keys and then
+      fast retreival of the entire row since we did not have 
+      to search the table to get the proper key in the column.
+    - Having small payload (1 kb) in large dataset (Tbs) and searching
+      for the payload can be very expensive. Also likely large dataset
+      spread out over multiple devices. 
+
+        Table:                                   Index on writer:
+        title - writer - Date                    writer 
+      1  a         y       11                      x  ---> points to 3
+      2  b         z       22                      y  ---> points to 1
+      3  c         x       33                      z  ---> points to 2
+
+* Indices decrease write performance
+    - Index can dramatically speed up data retreival but it self may be large
+      due to the additional keys and also could slow down data insertions and updates
+    - When adding rows or making updates to existing rows for a table with an
+      active index, we not only have to write the data but also update the index.
+      This decreases write performance.
+    - Performance degradation applies to all insert, update and delete operations
+      on a table. 
+    - Do not add unnecessary indexes and delete unused indexes. 
+    - Adding index improves search performance at the expense of added storage
+      and decreasing write performance.
+    - If database is write heavy and not read heavy, than indexes might be a bad idea.

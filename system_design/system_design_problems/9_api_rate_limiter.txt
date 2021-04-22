@@ -1,0 +1,351 @@
+* Let's design an API Rate Limiter which will throttle users based upon the number
+  of requests they are sending. 
+
+
+* What is a Rate Limiter?
+    - Imagine service that is getting a huge number of requests but can serve a 
+      limited number of requests per second. 
+    - Will need some type of throttling mechanism that would allow only a certain 
+      number of requests so our service can respond to all of them. 
+    - Rate limiter limits the number of events an entity (user, device, IP, etc.) 
+      can perform in a particular time window. 
+        - I.E.
+        - a user can send only message per second 
+        - a user is allowed only three failed credit card transactions per day 
+        - a single IP can only create 20 accounts per day 
+    - In general, a rate limiter caps how many requests a sender can issue 
+      in a specific time window. It then blocks requests once the cap is reached. 
+
+
+* Why do we need API rate limiting?
+    - DDOS attack on application layer 
+    - brute force password attempts 
+    - brute force credit card transactions 
+    - attacks are typically a barrage of HTTP/s requests which may look 
+      like they are coming from real users but are typically generated 
+      by bots 
+        * harder to detect and can more easily bring down a service, application,
+          or API 
+    - Also used to prevent revenue loss, to reduce infrastructure costs, 
+      to stop spam, stop online harassment 
+    - Following is a list of scenarios that can benefit from Rate limiting by making 
+      a service (or API) more reliable 
+        * Misbehaving clients/scripts
+            - Either intentional or not, some entities can overwhelm a service by 
+              sending a large number of requests 
+            - Another scenario is when a user is sending a lot of low priority requests 
+              and don't want to overwhelm the service to not process high priority 
+              requests 
+                * For example, user sending a large number of requests for analytics 
+                  data should not be allowed to hamper critical transactions for other 
+                  users. 
+        * Security 
+            - By limiting number of 2-factor attempts that the users are allowed to
+              perform, for example, the number of times they're allowed to
+              try the wrong password 
+        * To prevent abusive behavior and bad design practices 
+            - Without API limits, developers of client applications would use 
+              sloppy development tactics: i.e. requesting same info over and over again 
+        * To keep costs and resource usage under control 
+            - Services are generally designed for normal input behavior: user having 
+              one post per minute 
+            - Computers could easily push thousands/second through an API. 
+            - Rate limiters enable control on service APIs 
+        * Revenue 
+            - Certain services might want to limit operations based on the tier 
+              of their customer's service and thus create a revenue model based 
+              on rate limiting.
+            - There could be default limits for all the APIs a service offers. To go 
+              beyond that, the user has to buy higher limits.
+        * To eliminate spikiness in traffic
+            - make sure the service stays up for everyone else 
+
+
+* Requirements and Goals of the System 
+    - Functional Requirements 
+        * Limit the number of requests an entity can to an API within a 
+          time window: i.e. 15 requests/second 
+        * APIs accessible through a cluster so the rate limit should be 
+          considered across different servers 
+            - User should get an error message whenever the defined 
+              threshold is crossed within a single server or across a 
+              combination of servers 
+    - Non-Functional Requirements 
+        * System should be highly available 
+            - Rate limiter should always work because it protects our system from 
+              attack 
+        * Rate limiter should not introduce substantial latencies affecting 
+          the user experience 
+
+
+* How to do Rate Limiting 
+    - Rate limiting is a process that is used to define the rate 
+      and speed at which consumers can access APIs.
+    - Throttling is the process of controlling the usage of the APIs by customers 
+      during a given period. 
+    - Throttling can be defined at the application level and/or API level 
+    - When a throttle is crossed, the server returns HTTP status "429 - Too Many Requests" 
+            
+
+* What are the different types of throttling 
+    - Hard throttling 
+        * Number of API requests can not exceed a hard limit 
+    - Soft Throttling 
+        * Based on percentage over 
+            - if 100 requests/minute with 10% exceed-limit ... rate limiter 
+              will allow up to 110 requests/minute 
+    - Elastic or Dynamic Throttling 
+        * Number of requests can above the limit if resources are available 
+        * I.E. if limit is 100 requests/minute and plenty of resources are still 
+          available then can use those more resources 
+
+
+* What are the different type of algorithms used for rate limiting?
+    - Fixed Window Algorithm 
+        * In this algorithm, the time window is considered from the start of the 
+          time-unit to the end of the time-unit.
+        * For example, a period would be considered 0-60 seconds for a minute 
+          irrespective of the time frame at which the API request has been made.
+        * See api_rate_limiter_figure1.png 
+            - In the diagram below, there are two messages between 0-1 second and 
+              three messages between 1-2 seconds. If we have a rate limiting of 
+              two messages a second, this algorithm will throttle only ‘m5’.
+    - Rolling Window Algorithm 
+        * The time window is considered from the fractino of the time at which 
+          the request is made plus the time window length.
+        * For example, if there are two messages sent at the 300th millisecond 
+          and 400th millisecond of a second, we’ll count them as two messages 
+          from the 300th millisecond of that second up to the 300th millisecond 
+          of next second. In the above diagram, keeping two messages a second, 
+          we’ll throttle ‘m3’ and ‘m4’
+
+
+* High level desing for rate limiter 
+    - Rate limiter will be responsible for deciding which request will be served 
+      by the API servers and which request will be declined.
+    - Once a new request arrives, the Web Server first asks the Rate Limiter 
+      to decide if it will be served or throttled. If the request is 
+      not throttled, then it'll be passed ot the API servers 
+
+
+                                              |------------> API Servers      
+                                              |
+                                              v
+      client <-----> web server <------> rate limiter
+                                         |          |
+                                         |          |
+                                         |          |
+                                         v          v
+                                backend storage    cache server 
+
+
+* Basic System Design and Algorithm 
+    - Lets take the example where we want to limit the number of requests per user 
+    - Under this scenario, for each unique user, we would keep a count representing 
+      how many requests the user has made and a timestamp when we started counting
+      the requests.
+    - We can keep it in a hashtable where the key would be the UserID and the value 
+      would be the structure containg an integer for Count and integer for epoch time 
+
+      key/val 
+      UserID:{Count, EpochTime}
+
+    - Let's assume our rate limiter is allowing three requests per minute per user 
+      so whenever a new request comes in, our rate limiter will perform the following 
+      steps
+        * if the "UserID" is not present in the hash-table, insert it, set "Count"
+          to 1 set "StartTime" to the current time and allow the request 
+        * Otherwise, find the record of the "UserID" and if 
+          currentTime-StartTime >= 1 min, set the "StartTime" to the current time 
+          and "Count" to 1 and allow the request. 
+        * If CurrentTime-StartTime <= 1 min,
+            if "Count<3" incremenet count and allow the request 
+            if 'Count>=3" reject the request 
+    - What are some of the problems with our algorithm?
+        * This is a Fixed Window algorithm since we're resetting the "StartTime"
+          at the end of every minute, which means it can potentially allow twice the number 
+          of requests per minute.
+            - Imagine if user sends three requests at the last second of a minute, 
+              then she can immediately send three more requests at the very first 
+              second of the next minute, resulting in 6 requests in the span of two 
+              seconds. The solution to this problem would be a sliding window algorithm 
+              which we’ll discuss later.
+                * See api_rate_limiter_figure2.png
+        * Atomicity 
+            - In a distributed environment, the "read-and-then-write" behavior 
+              can create a race condition. Imagine if user's current 'Count' is
+              2 and that she issues two more requests.
+            - If two separate processes served each of these requests and concurrently 
+              read the Count before either of them updated it, each process would 
+              think that the user could have one more request and that she had not 
+              hit the rate limit. 
+            - If we are using Redis to store our key-value, one solution to resolve 
+              the atomicity problem is to use Redis lock for the duration of the 
+              read-update operation.
+            - However, this would come at the expense of slowing down concurrent requests 
+              from the same user and introducing another layer of complexity.
+            - We can use Memcached, but it would have comparable complications 
+            - If we are using a simple hash-table, we can have a custom implemenation for 
+            'locking' each record to solve our atomicity problems. 
+    - How much memor would we need to store all of the user data? 
+        * Let's assume the simple solution where we are keeping all of the 
+          data in a hash-table 
+        * Let's assume "UserID" takes 8 bytes. Let's also assume a 2 byte "Count" 
+          which can count up to 65k, is sufficient for our use case.
+        * Although epoch time will need 4 bytes, we can choose to store the minute 
+          and second part, which can fit into 2 bytes.
+        * We will need a total of 12 bytes (12 = 8+2+2)
+        * Let's assume our hash table has an overhead of 20 bytes for each record.
+        * If we need to track one million users at any time, the total 
+          memory we would need would be 32 MB 
+            (12+20)*1e6 = 32 MB 
+        * If we assume that we would need a 4 byte number to lock each user's 
+          record to resolve our atomicity problems, we would need a total of 36 MB 
+          of memory. 
+        * This can easily fit on a single server, however we would not liek to route
+          all of our traffic through a single machine. 
+        * Also, if we assume a rate limit of 10 requests per second, this would translate into 
+          10 million QPS for our rate limiter! 
+        * This would be too much for a single server. 
+        * Practically, we can assume we would use a Redis or Memcached kind of 
+          solution in a distributed setup.
+        * We'll be storing all the data in the remote Redis servers and the Rate Limiter 
+          servers will read (and update) these servers before serving or throttling 
+          any request. 
+
+
+* Sliding Window Algorithm 
+    - We can maintain a sliding window if we keep track of each request per user.
+    - We can store the timestamp of each request in a Redis Sorted Set 
+      in our value field of hash table 
+
+      key/val 
+      UserID: {SortedSet<time>}
+
+    - Let's assume our rate limiter is allowing three requests per minute per user
+      so whenever a new request comes in, the Rate Limiter will perform the 
+      following steps 
+        * Remove all the timestamps from the SortedSet that are older 
+          than "CurrentTime-1 minute" 
+        * Count the total number of elements in the sorted set, reject the request 
+          if this count is greater than our throttling limit of 3 
+        * Insert the current time in the sorted set and accept the request 
+    - How much memory would we need to store all of the use data for sliding window?
+        * 'UserID'=8 bytes, epochtime=4 bytes and rate limiting of 
+          500 requests per hour. Let assume 20 byte overhead for hash-table and 
+          and 20 byte overhead for sorted set. At max we would need a total of 12KB
+          to store one user's data. 
+            - 8 + (4 + 20 (sorted_set overhead))*500 + 20(hash-table overhead) = 12KB 
+        * Here we are reserving 20 bytes overhead per element 
+        * In a sorted set, we can assume that we need at least two pointers to maintain
+          order among element: one pointer to the previous element and one to the next element.
+        * On a 64 bit machine, each pointer will cost 8 bytes so we will need
+          16 bytes for pointers. We added an extra word (4 bytes) for storing other 
+          overhead.
+        * If we need to track one million users at any time, total memory we would 
+          need would be 12 GB 
+            12kB*1e6=12GB 
+        * Sliding window algorithm takes a lot of memory compared to the fixed window;
+          this would cause scalabilitiy issues 
+        * What if we can combine the above two algorithms to optimize our memory usage. 
+
+
+* Sliding Window With Counters 
+    - What if we keep track of request counts for each user using multiple 
+      fixed time windows: i.e. 1/60th the size of our rate limits time window.
+    - For example, if we hae an hourly rate limit we can keep a count for each minute and
+      calculate the sum of all counter in the past hour when we receive a new 
+      request to calculate the throttling limit. 
+    - This would reduce our memory footprint.
+    - Let's take an example where we rate limit at 500 requests/hour with an
+      additional limit of 10 requests per minute.
+    - This means that when the sum of the counters with timestamps in the 
+      past hour exceeds the request threshold (500), the user has exceeded
+      the rate limit.
+    - In additon to that, if the user cant' send more than ten requests 
+      per minute. 
+    - This would be a reasonable and practical consdieration as none of the real 
+      users would send frequent requests. 
+    - Even if they do, they will see successs with retires since their limit 
+      gets reset every minute. 
+    - We can store our counters in a Redis Hash since it offers incredibly 
+      efficient storage for fewer than 100 keys. 
+    - When each request increments a counter in the hash, it also sets the hash 
+      to expire an hour later. We will normalize each time to a minute. 
+    - See api_rate_limiter_figure3.png
+    - How much memory would we need to store all the user data for sliding 
+      window with counters?
+        * Let's assume "UserID" takes 8 bytes. 
+        * Each epoch time will need 4 bytes
+        * And the counter would need 2 bytes 
+        * Let's suppose we need a rate limit of 500 requests per hour.
+        * Assume 20 bytes overhead for hash-table
+        * Assume 20 bytes overhead for redis hash 
+        * Since we'll keep count for each minute, at max, we would need 60 entires 
+          for each user. 
+        * We would need a total of 1.6KB to store one user's data
+            8 + (4 + 2 + 20(Redis hash overhead)))*60 + 20 (hash-table overhead)=1.6kB 
+        * If we need to track one million users at any time, total memory we would need 
+          would be 1.6 GB. 
+            1.6kB*1e6 = 1.6 GB 
+    - Our "Sliding Window With Counters" algorithm uses 86% less memory than the 
+      simple sliding window algorithm.
+
+
+* Data Sharding and Caching 
+    - We can shard based on the "UserID" to distribute the user's data.
+    - For fault tolerance and replication we should use Consistent Hashing 
+    - If we want to hae different throttling limits for differnet APIs, we can choose 
+      to shard per user per API.
+        * Take the example of URL shorterner, we can have different rate limiter
+          for createUrl() and deleteUrl() APIs for each user or IP 
+    - If our APIs are partitioned, a practical consideration could be to have a 
+      separate (somewhat smaller) rate limiter for each API shard as well. 
+    - Let's take the example of our URL Shortnere where we want to limit each 
+      user to not create more than 100 short URLs per hour. Assuming we are using
+      Hash-Based-Partitioning for our createUrl() API, we can rate limit each 
+      partition to allow a user to create not more than three short URLs per 
+      minute in addition to 100 short URLs per hour. 
+    - Our system can get huge benefits from caching recent active users.
+        * Application servers can quickly check if the cahce has the desired record 
+          before hitting backend servers.
+        * our rate limiter can significantly benefit from the write-back cache 
+          by updating all counters and timestamps in cache only.
+        * The write to the permanent storage can done at fixed intervals.
+        * This way, we can ensure minimum latecny added to the user's requests by 
+          the rate limiter.
+        * The reads can always hit the cahce first, which will be extremely useful
+          once the user has hit their maximum limit and the rate limiter will onyl be 
+          reading data without any udpates. 
+        * LRU eviction policy is reasonable 
+
+
+* Should we rate limit by IP or by user?
+    - Let's discuss pros and cons of using each onf these schemes 
+    - IP
+        * In this scheme, we throttle requests per-IP; atlthogh its not optimal
+          in terms of differentianting between "good" and "bad" actors, its still better
+          than not having rate limiting at all.
+        * The biggest problem with IP based throttling is when multiple users share 
+          a single public IP like in an internet cafe or smartphone users that 
+          are using the same gateway. 
+        * One bad user can cause throttling to other users.
+        * Another issues could arise while cahcing IP-based limtis, as there are huge number 
+          of IPv6 addresses avialable to a hacker form even one computer.
+            - It's trivial to make a server run out of memory tracking IPv6 addresses!
+    - User 
+        * Rate limiting can be done on APIs after user authentication
+        * Once authenticated, the user will be provided with a token which the user 
+          will pass with each reques.
+        * this will ensure that we will rate limit against a particular API that has 
+          a valid authentication token.
+        * But what if we have to rate limit on the login API itself?
+        * The weakness of this rate-limiting would be that a hacker can perform a DDOS 
+          attack against a user by entering wrong credentials up the limit;
+          after that the actual user won't be able to log in 
+    - Hybrid 
+        * Combine IP and User throttling 
+        * A right approach could be to do both per-IP and per-user rate limiting as
+          they both have weaknesses when implemented alone.
+        * This will result in more cache entries with more details per entry, hence 
+          requiring more memory and storage. 

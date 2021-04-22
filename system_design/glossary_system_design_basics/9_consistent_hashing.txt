@@ -1,0 +1,37 @@
+* Distributed Hash Table
+    - index = hash_function(key)
+    - simple hash_function = lambda x: x%n
+        * Not horizontally scalable, whenever new cache host is added all
+          mappings are broken. Practically, difficult to schedule downtime
+          to update all mappings
+        * May not be load balanced (especially for non-uniformly distributed data)
+          Most real world data will not be distributed uniformly, thus leading
+          to some hot caches and some cold caches
+        * => Utilize consistent hashing
+
+* Consistent Hashing
+    - Distribute data across a cluster to miniimize reorganization when nodes
+      are added or remove => caching system can be scaled up or down (without downtime)
+    - When cache system is resized, 'total_num_keys/total_num_server' need to remapped
+      if using consistent hashing -> compare this to simple hashing whenever
+      every k needs to be remapped
+    - Attempt is made to remap all keys to same host if possible
+    - When a host is removed, its key are distributed to other hosts
+    - When a host is added, it takes keys from other hosts 
+
+* How does it work?
+    - index=hash_function(key)
+    - consider putting the indices on a ring uniformly 
+    - Given a key, hash that key and put it on the ring 
+    - Move clockwise on the ring until we hit a host cache
+      this host cache now has the key 
+    - Now consider adding a new host server 
+    - Keys will be redistributed to make sure each key is clockwise nearest 
+      next host 
+    - This however, still does not solve load balancing of non-uniform data 
+        * Add virtual replicas of caches 
+        * Instead of mapping each cache to a single point on the ring, map it
+          to multiple points -> i.e. replicas 
+        * This way, each cache is associated with multiple portions of the ring 
+        * If hash function mixes well as the number of replicas increase, the
+          keys will be more balanced 

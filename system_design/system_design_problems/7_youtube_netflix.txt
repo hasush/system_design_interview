@@ -1,0 +1,330 @@
+* Video sharing service like Youtube where users will be able to upload/view/search videos. 
+
+
+* Why Youtube?
+    - One of the most popular video sharing websites in teh world. 
+    - Users can upload, view, share, rate, and report videos as well as add comments
+      on videos. 
+
+
+* Requirements and Goals of the System 
+    - Design simple version of Youtube 
+    - Functional Requirements
+        * Upload videos 
+        * Share and view videos 
+        * Perform searches based on video titles 
+        * Record stats of videos 
+            - likes/dislikes, total number of views 
+        * Add/view comments on videos 
+    - Non-Functional Requirements 
+        * Highly reliable --> any video uploaded should not be lost 
+        * Highly available 
+            - Consistency should take a hit in the interest of availability 
+                * If a user doesn't see a video for a while, it should be fine 
+        * Users should have real-time experience while watching videos and should 
+          not feel any lag. 
+    - Not in scope
+        * video recommendations, most popular videos, channels, subscriptions 
+          watch later, favorites, etc. 
+
+
+* Capacity Estimation and Constraints 
+    - 1.5e9 total users
+    - 800e6 daily active users (DAU)
+    - Let user view 5 videos per day 
+        * video views/sec = 800e6*5/86400 ~- 40e8/8e4=50e3 video views/sec 
+    - Upload:view ratio = 1:200
+        * videos uploaded/sec = 50e3/200=50e3/2e2=250 videos uploads/sec 
+    - Storage Estimates 
+        * 50 MB/minute of video (video stored in multiple formats)
+        * Videos uploaded/min
+        * 250 videos uploads/sec * 60sec/min * 50 MB/video =  750 GB/min 
+    - Bandwidth Estimation 
+        * view
+            - single format --> 10 MB/minute 
+            - 50e3 video views/sec * 60 sec. * 10 MB/minute = 30e12  
+
+
+* System APIs 
+    - We can have SOAP or REST API to expose the functionality of our service 
+    - uploadVideo(api_dev_key, video_title, video_description, tags[], 
+                  category_id, default_language, recording_details, video_contents)
+        * api_dev_key (string): user id of upload ... also used to throttle uploads 
+                                based on allocated quota 
+        * returns: successful upload with return HTTP 202 (request accepted) and 
+                   one the video encoding is completed the user is notified 
+        * Can also expose a queryable API to let users know the current status of 
+          their uploaded video. 
+    - searchVideo(api_dev_key, search_query, user_location, maximum_videos_to_return, page_token)
+        * page_token (string): This token will specify a page in the result set that 
+                               should be returned 
+        * returns: A JSON containing information about the list of video resources 
+                   matching the search query. Each video resource will have a video
+                   title, a thumbnail, a video creation data, and a view count.
+    - streamVideo(api_dev_key, video_id, offset, codec, resolution)
+        * offset (number): where in the video to start ... if watching on multiple devices 
+                           will be able to start video at where one left off 
+        * codec & resolution (strings): if watching on phone and then start watching on computer 
+                                        there are two different codecs and resolutions for both 
+        * returns (STREAM): a media stream (video chunk) from the given offset 
+
+
+* High Level Design 
+    - Processing Queue
+        * Each uploaded video will be pushed to a processing queue to be dequed 
+          later for encoding, thumbnail generation, and storage 
+    - Encoder 
+        * To encode each video into multiple formats 
+    - Thumnails generator
+        * Generate a few thumbnails for each video 
+    - Video and Thumbnail storage 
+        * Store video and thumbnail files in some distributed file system 
+    - User Database 
+        * Store user's information: name, email, address, etc. 
+    - Video Metadata Storage 
+        * A metadata database to store all the information about videos 
+            - title 
+            - filepath in the system 
+            - uploading user 
+            - total views 
+            - likes 
+            - dislikes 
+            - video comments 
+
+           <-- search -->  
+    client <-- upload -->   web_server <--------> application server === processing queue ===>  encoder----|
+           <-- view   -->                         ^        ^       ^                                |      |      
+                                                  |        |       |                                |      |
+                                                  |        |       |                                |      |
+                                                  |        |       |                                |      |
+                                                  |        |       |                                |      |
+                                                  v        V       |                                |      | 
+                                               user DB  metadata    video and thumbnail storage <---|      |
+                                                          DB <---------------------------------------------|
+
+
+* Database Schema 
+    - Video metadata storage - MySQL
+        * VideoID 
+        * Title 
+        * Description 
+        * Size 
+        * Thumbnail 
+        * Uploader/User 
+        * Total number of likes 
+        * Total number of dislikes 
+        * Total number of views 
+        * For every video comment, need to store 
+            - CommentID 
+            - VideoID 
+            - UserID 
+            - Comment 
+            - TimeOfCreation 
+    - User data storage - MySQL 
+        * userID, Name, email, address, age, registration details, etc. 
+
+
+* Detailed Component Design 
+    - Service should be read-heavy, so we will focus on building a system 
+      that can retrieve videos quickly.
+    - Read:write ratio = 200:1
+    - Where should videos be stored?
+        * Distributed file system like HDFS or GlusterFS 
+    - How should we efficiently manage read traffic?
+        * We should segregate our read traffic from write traffic.
+        * Will have multiple copies of each video, so can distribute read 
+          traffic to multiple servers.
+        * For metadata, can have primary/secondary configurations where writes 
+          will go primary first and then get applied at all the secondaries.
+            - Such configurations can cause some staleness in the data 
+            - i.e. When a new video is added, its metadata would be inserted in 
+              primary first, and before it gets applied to the secondary,
+              our secondaries would not be able to see it and therfore it will be 
+              returning stale results to the users 
+            - This staleness might be acceptable in our system as it would 
+              be very short-lived, and the user would be able to see the 
+              new videos after a few milliseconds
+    - Where would thumbnails be stored?
+        * There will be a lot more thumbnails than videos.
+        * Assume every video will have five thumbnails, we need to have a 
+          very efficient storage system that can serve huge read traffic 
+        * Two considerations before deciding which storage system should be used
+          for thumbnails
+            - Thumbnails are small files: i.e. 5 kB 
+            - Read traffic for thumbnails will be huge compared to videos 
+              Users will be watching on video at a time, but they might be 
+              looking at a page with 20 thumbnails of other videos 
+        * Let's evaluate storing all the thumbnails on a disk. 
+            - Given that we have a huge number of files, we have to perform 
+              many seeks to different location on the disk to read these files.
+            - This is quite inefficient and will result in higher latencies.
+            - Bigtable can be a reasonable choice here as it combines multiple 
+              files into one block to store on the disk and is very efficient 
+              in reading a small amount of data. 
+                * Both of these are the two most significant requirements 
+                  for our service
+            - Keeping hot thumbnails in the cache will also help improve the 
+              latencies and given that the thumbnails files are small in size, we
+              can easily cache a large number of such files in memory.
+        * Video Uploads 
+            - Since videos could be huge, if while uploading connection drops, we 
+              should support resuming from the same point 
+        * Video Encoding 
+            - Newly uploaded videos are stored on the server
+            - New task is added to the processing queue to encode the video into 
+              multiple formats 
+            - Once all the encoding is completed, the uploader will be notified 
+              and video is made available for view/sharing 
+            - See figure youtube_netflix_figure1.png
+
+
+   CDN<---------------video and image cache<----video storage  ---------------------> BigTable Thumbnails Storage 
+    |                       ^                        ^         |                                ^
+    |                       |                        |         |                                |
+    |                       |                        |         |                                |
+    v   <-- search -->      V                        V         V                                |
+client <-- upload -->   web_server <--------> application server === processing queue ===>  encoder----|
+       <-- view   -->                         ^        ^       ^                                       |      
+                                              |        |       |                                       |
+                                              |        |       |                                       |
+                                              |        |       |                                       |
+                                              |        |       |                                       |
+                                              v        V       |                                       | 
+                                           user       metadata                                         |
+                                        management     DB <--------------------------------------------|
+
+
+* Metadata Sharding 
+    - Since we have a huge number of new videos every day and our read load is
+      extremely high, we need to distribute our data onto multiple machines 
+      so that we can perform read/write operations efficiently
+    - Have many options to shard data.
+    - Sharding based on UserID 
+        * We can try storing all the data for a particular user on one server.
+        * While storing, we can pass the UserID to our hash function, which 
+          will map the user to a database server where we will store all the metadata 
+          for that user's videos. 
+        * While querying for videos of a user, we can ask our hash function to find the 
+          server holding the user's data and then read it from there. 
+        * To search for videos by titles, we will have to query all servers and 
+          each server will return a set of videos. 
+        * A centralized server will then aggregate and rank these results 
+          before returning them to the user. 
+        * Issues 
+            - What if a user becomes popular? There could be a lot of queries on
+              the server holding that user; this could create performance bottleneck.
+              This will also affect the overall performance of our service. 
+            - Over time, some users can end up storing a lot of videos compared to others.
+              Maintaining a uniform distribution of growing user data is quite tricky.
+            - To recover from these issues, either we have to repartition/redistribute 
+              our data or used consistent hashing to balance the load between servers 
+    - Sharding based on VideoID
+        * Our hash function will map each VideoID to a random server where we will store that 
+          video's metadata.
+        * To find videos of a user, we will query all servers and each server will return
+          will return a set of videos.
+        * A centralized server will aggregate and rank these results before 
+          returning them to the user.
+        * This approach solves the problem of popular user but shifts it to popular videos
+          problem.
+        * Further improve performance by introducing a cache to store hot videos 
+          in front of the database servers. 
+
+* Video Deduplication 
+    - With a huge number of users uplaoding a massive amount of video data,
+      we will have to deal with video deduplication 
+    - Duplicate videos often 
+        * differ in aspect ratios or encoding
+        * contain overlays or additional borders 
+        * are excerpts from a longer original videos 
+    - Proliferation of duplicate videos can have an impact on many levels 
+        * Data Storage
+            - We could be wasting storage space by keeping multiple copies of the 
+              same video 
+        * Caching 
+            - Duplicate videos would result in degraded cache effiency by taking
+              up space that could be used for unique content 
+        * Network Usage 
+            - Duplicate videos will also increase the amount of that must be sent
+              over the network to in-network caching systems.
+        * Energy Consumption
+            - Higher storage, ineffeicient caches, and network could result in 
+              energy wastage 
+    - For end users, these inefficiencies will be realized in the form of 
+      duplicate search results, longer video startup times, and interrupted 
+      streaming
+    - For our service, video deduplication makes most sense early; when a user is 
+      uploading a video as comapred to post-processing it to find duplicate 
+      videos later. 
+    - Inline deduplication will save us a lot of resources that can be used to 
+      encode, transfer, and store the duplicate copy of the video. 
+    - As soon as any user starts uploading a video, our service can run video 
+      matching algorithms (eg. BLock Matching, Phase Correlation, etc.) to
+      find duplications.
+    - If we already have a copy of the video being uploaded, we can either stop
+      the upload and use the existing copy or continue the upload
+      and use the newly uploaded video if it is of higher quality.
+    - If the newly uploaded video is a subpart of an existing video or vice versa,
+      we can intelligently divide the video into smaller chunks so that we only
+      upload the parts that are missing. 
+
+
+* Load Balancing 
+    - We should use consistent hashing among our cache servers which will also help 
+      in balancing the load between cache servers.
+    - Since we will be using static hash-based scheme to map videos to hostnames,
+      it can lead to an uneven load on the logical replicas due to each video's 
+      different popularity.
+    - For instance, if we a video becomes popular, the logical replica corresponding 
+      to that video will experience more traffic than other servers. 
+    - These uneven loads for logical replicas can then translate into uneven 
+      load load distribution on corresponding physical servers. 
+    - To resolve this issue, any busy server in one location can redirect a client to 
+      a less busy server in the same cache location. 
+        * Can use dynamic HTTP redirections for this scenario 
+        * Use of redirection also has its drawbacks. 
+            - First, since our service tries to load balance locally, it leads to 
+              multiple redirections if the host that receives the redirection 
+              can't serve the video. 
+            - Also, each redirection requires a client to make an additional HTTP
+              request; it also leads to higher delays before the video 
+              starts playing back. 
+            - Moreover, inter-tier (or cross data-center) redirections lead a 
+              client to a distant cache location because the higher tier caches 
+              are only present at a small number of locations. 
+
+
+* Cache 
+    - To serve globally distributed users, our service needs a massive scale video 
+      delivery system.
+    - Our system should push its content closer to the user using a large number 
+      of geographically distributed video cache servers.
+    - We need to have a strategy that will maximize user performance and also 
+      evenly distributes the load on its cache servers. 
+    - Can introduce a cache for metadata servers to cache hot database rows.
+    - Using Memcache to cache the data and Application servers before hitting the 
+      database can quickly check if the cache has the desired rows. 
+    - LRU can be a reasonable cache eviction policy for our system. 
+    - More intellgient cache?
+        * 80/20 rules --> 20% of content generates 80% of traffic.
+        * cache 20% of daily read volume of videos and metadata. 
+
+
+* Content Delivery Network (CDN)
+    - A system of distributed servers that deliver web content to a user 
+      based on the user's geographic locations, the orgiin of the web page, and 
+      a content delivery service. 
+    - Our service can move popular videos to CDNs 
+        * CDNs replicate content in multiple places. 
+        * Theres a better chance of videos being closer to the user with fewer hops, 
+          and videos will stream from a friendlier network. 
+        * CDN machines make heavy use of caching and mostly serve videos out of 
+          memory. 
+    - Less popular videos (1-20 views per day) that are not cached by CDNs can be 
+      served by our servers in various data centers. 
+
+
+* Fault Tolerance 
+    - We should use consistent hashing for distribution among database servers. 
+    - Consistent hashing will not only help in replacing a dead server but
+      also help in distributing load among servers. 

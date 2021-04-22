@@ -1,0 +1,47 @@
+* Caching allows you to vastly better use the resources you have available
+  and make otherwise unattainable product requirements feasible
+* Principal is to use recently used things again.
+    - In particular, reuse it really fast
+* Used in every layer:
+    - hardware, operating system, web browsers, web applications
+* Caches exist in all layers of the architecture but are often found at the level
+  nearest to the front end so to return data quickly so to reduce the burden of
+  downstream tasks.
+
+* Application Server Cache
+    - application server has fast cache or it's own disk cache (which is faster than
+      going to the DB)
+    - if multiple nodes, each node could have its own caches
+    - load balancing increases cache misses
+        * global caches and distributed caches
+
+* Content Delivery (Distribution) Network (CDN)
+    - Need CDN cache if serving large amounts of static media
+    - Request comes in -> do you have it CDN -> if not go to back end and get it
+      and cache it and serve the Request
+    - If small system we are building, can host a DNS static server 
+
+* Cache Invalidation
+    - Contents of storage change but cache remains the same
+      --> Need to invalidate the cache
+    - Write-through cache
+        * Write both to cache and database simultaneously -> Complete data consistency
+        * Nothing gets lost in case of a crash, power failure, system disruption.
+        * 2x more expensive write operations since two writes now
+    - Write-around cache
+        * Write directly to permanaent storage
+        * Avoid having to constantly fill cache with information that won't be used
+        * Have to deal with latency of moving contents from disk to cache for recent
+          write operations.
+    - Write-back cache
+        * Write only to cache
+        * Write to database at intervals
+        * If failure, will lose data if it has yet to be written to disk
+
+* Cache enviction policies
+    - FIFO (first in first out)
+    - LIFO (last in first out)
+    - LRU (least recently used)
+    - MRU (most frequently used)
+    - LFU (least frequently used)
+    - RR (random replacement)

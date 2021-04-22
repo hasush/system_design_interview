@@ -1,0 +1,306 @@
+* Designing Pastebin 
+    - Users can store plain text. Service creates a randomly generated url
+      that accesses the pasted text. 
+    - Pasebin like services enable users to store plain text or images over the network
+      and generate unique URLs to access the uploaded data. 
+    - Service allows data to be shared quickly as only need to share URL to the data.
+
+* Requirements and Goals of the System
+    - Functional Requirements 
+        * Users should be able to upload or "paste" their data
+        * Users will only be able to upload text. 
+        * Get a unique URL to access the pasted text 
+        * Data and links will expire after a specific timespan automatically;
+          users should be able to specify expiration time.
+        * Users should be able to optionally be able to pick a custom alias for their
+          paste. 
+    - Non-Functional Requirements
+        * System must be highly reliable. Any data uploaded should not be lost. 
+        * System must be highly available. If service is down, users will not be 
+          able to access their Pastes.
+        * Users should be able to access their Pastes in real-time with minimum
+          latency. 
+        * Paste links should not be guessable (not predictable)
+    - Extended Requirements 
+        * Analytics, i.e. how many times was a Paste visited?
+        * Our service should also be acessible through REST APIs by other services. 
+
+* Some design considerations
+    - Pastebin shares some requirements with URL shortening, but there are 
+      some additional design considerations we should keep in mind
+    - What should the limit on the amount of text users can paste at a time?
+        * We can limit no more 10 MB to stop abuse of the service 
+    - Should we impose size limits on custom URLs?
+        * User can specify custom URL if they like, however reasonable and
+          often desirable to impose size limits on custom URLs to have consistent 
+          databse 
+
+* Capacity Estimation and Constraints 
+    - Our service will be read heavy, there will be more read requests compared 
+      to new Paste creation.
+    - Assume 5:1 ratio for read/write 
+    - Traffic Estimates 
+        * Much less traffic than twitter or Facebook 
+        * ~1e6 new pastes a day => 5e6 reads a day 
+        * Pastes/second = 1e6/(24*3600) ~= 1e6/(100*1000) = 10 Pastes/second (12 Pastes/second) 
+        * Reads/second = 60 reads/second 
+    - Storage Estimate: Data Storage 
+        * Upload maximum of 10 MB
+        * However, likely less size: 10 kB
+        * 10 year retention 
+        * 1e6 pastes/day * 10 kB/paste = 1e6 * 10 * 2**10 ~= 10 * 2**20 * 2**10 = 10 * 2**30
+          = 10 GB/day 
+        * If we save for 10 years, will need: 10*365*10=36500 ~= 36.5 TB
+    - Storage Estimate: Key Generation 
+        * 1e6 new pastes a day 
+        * if 64bit encoding with 6 letter strings: 64^6=68.7 billion unique strings 
+        * 1e6 strings needed/per day * 365 days * 10 years ~= 3.6 * 100 * 10 * 1e6
+          = 3.6 * 1e9 = 3.6 billion strings per decade 
+        * 3.6 billion strings/decade * 6 byte per string = 22e9 bytes = 22 GB 
+        * 22 GB << 36 TB 
+        * Assume 70% Capacity model --> Don't want to ever use more than 70% of capacity 
+          --> 36/0.7 = 51.4 TB needed 
+    - Bandwidth estimates:
+        * 12 pastes/second * 10kB/paste = 120 kB/S
+        * 60 reads/second * 10 kB/read =  600 kB/S = 0.6 MB/s 
+    - Memory Estimates 
+        * Assume 80/20 rule --> 20% of urls wil generate 80% of traffic 
+        * 0.2*5e6 read/day*10kB/read = 10 GB cache 
+
+* System APIs
+    - We have SOAP (simple object access protocol) and REST APIs to expose the 
+      functionality of our service 
+    - addPaste(api_dev_key, paste_data, custom_url=None, user_name=None, paste_name=None, expire_data=None)
+        * api_dev_key (string): The API developer key of a registered account. This will
+                                be used to, among other things, throttle users based
+                                on their allocated quota.
+        * etc.
+        * Returns: A successful insertion returns the URL through which the paste can be 
+                   accessed, otherwise, it will return an error code 
+    - getPaste(api_dev_key, api_paste_key)
+        * api_paste_key (string): key of the paste to be retrieved from the database 
+    -deletePaste(api_dev_key, api_paste_key)
+
+* Databse Design
+    - Few observations on the data we are storing
+        * Need to store billions of records 
+        * Each metadata object we are storing would be small (less than 1 KB)
+        * Each paste object we are storing can be of medium size (few MB)
+        * No relationship between records, except if we want to store which user created what Paste 
+        * Our service is read heavy 
+    - Database Schema
+        * We will need two tables, one for storing information about the Pastes 
+          and the other for users' data 
+        
+        Paste                               User
+    PK  URLHash: varchar(16)            PK  UserID: int 
+        ContentKey: varchar(512)            Name: varchar(20)
+        ExpirationDate: datetime            Email: varchar(32)
+        UserID: int                         CreationDate: datetime
+        CreationDate: datetime              LastLogin: datetime
+    
+    - 'URLHash' is the URL equivalent to TinyURL, and 'ContentKey" is a 
+      reference to an external object storing the contents of the paste 
+
+* High Level Design 
+    - At a high level, we will need an applicatin layer that will serve all the read
+      and write requests. 
+    - Application layer will talk to our storage layer to store and retrieve data. 
+    - We can segregate our storage layer from database storing metadata related to
+      to each paste, user, etc.
+    - Can using something like Amazon S3 to store paste data 
+    - Division will allow use to scale each storage independently 
+
+
+    client ---> application server --- > object storage 
+                       |
+                       |
+                       v
+                metadata storage 
+
+* Componenent Design 
+    - Application Layer 
+        * Will handle all incoming and outgoing requests 
+        * Application servers will be talking to the backend data store components 
+          to serve requests 
+        * How to handle a write request?
+            - Custom Key
+                * If custom key already exists in databse return error 
+            - Key Generation on the fly 
+                * Upon a write request, the application server will generate a 6 letter
+                  random key that will serve as the key of the Paste (if the user has not
+                  provided a custom key).
+                * Application server will then store the contents of the Paste and
+                  the generated key in the database.
+                * After a successful inersertion, server will return the key to the user 
+                * If collision with existing key, keep generating key until no collision
+            - Key Generation Service (KGS) 
+                * KGS generates random 6 letter keys and stores them in key-DB 
+                * Whenever we need to store a new Paste, get a key from the key-DB 
+                * Approach will be simple and fast since do not have to generate on the 
+                  fly and do not have to worry about collisions 
+                * KGS will make sure that all keys are unique 
+                * KGS will have two tables, one for generated keys and one for used (marked)
+                  keys.
+                * As soon as KGS serves a key, it moves it to the marked table.
+                * KGS should keep keys in memory so that it can serve it quickly 
+                * As soon as KGS loads keys to memory, it can also put them in the marked 
+                  table.
+                * If KGS dies, then those keys in memory are lost but we still have tons of keys
+                  (68.7 billion)
+                * Is KGS single point of failure?
+                    - Yes, but to solve we can have replica of the KGS in case of failure. 
+                * Each application server can store keys of the key-DB in their memory too. 
+                  Again, if application servers die then those keys die as well. 
+        * How to handle Paste read request?
+            - Upon a read request, application layer searches database for the key.
+            - If content is found, it serves the content, otherwise return an error.
+    - Datastore Layer 
+        * Divide datastore into two layers 
+            - Metadata database
+                * We can use a relational database like MySQL
+                  or a Distributed Key-Value store like Dynamo or Cassandra 
+            - Object Storage:
+                * We can store our contents in an Object storage like Amazon's S3
+                * Whenever we hit full capacity, we can always add more servers 
+            - See pastebin_figure1.png 
+
+                                                          |----> object storage       
+                                                          |           |
+                                                          |           v
+            client ---> LB ---> application servers ---> LB ---> block cache
+                                         |                |
+                                         |                | 
+                                         |                |
+                                         v                |------> metadata cache 
+                                        KGS               |           ^
+                                         |                |           |
+                                         |                |           |
+                                         |                |-------> metadata
+                                         |                            ^
+                                         |                            |
+                                         v                            |
+                   key-DB standby <--- key-DB <---------cleanup service 
+
+
+* Data partitioning and Replication
+    - To scale out our DB, we need to partition it so that it can store information 
+      about billions of URLs
+    - Need partitioning scheme that would divide and store our data into different
+      DB servers 
+    - Range Based Partitioning
+        * Store urls based on hash val's first character 
+        * can combine less frequent letters 
+        * data inbalance issues 
+    - Hash based partitioning
+        * Take hash of the value we are storing then put in partition 
+          of that hash val. 
+        * Can still lead to overloaded partitions --> consistent hashing 
+
+* Cache 
+    - We can cache frequently used URLs 
+    - i.e. use Memcached application 
+    - Before hitting the backend servers, can quickly see if key/long url 
+      is in the cache 
+    - How much memory should we have?
+        * We could start with 20% of daily traffic, and based on clients' usage
+          patterns we can adjust how many cache servers we need. 
+        * Would need abou 200 GB to cache 20% of traffic and modern 
+          server would have 256 GB memory so easy enough to hold cache in one machine
+    - Which cache eviction policy would best fit our needs?
+        * LRU is good ... evict oldest members from the cache 
+        * Could use Linked Hash Map 
+        * Can replicate caching servesr to distribute the load between them 
+    - How can cache replica be updated?
+        * Whenever there is cache miss, application server would hitting backend
+          database. 
+        * Whenever this happens, we can update the cache and pass the new 
+          entry to all the cache replicas.
+        * Each replica then updates its entry, if it already has it, 
+          then it ignores it.
+
+    client  <----> server <------>  cache 
+        ^            |  ^             ^
+        |            |  |             |
+        |            |  |             |
+        |            |  |             |
+         Has URL <---|  |---------> database
+          expired?
+
+    - Order of operations (tinyurl_figure3.png )
+        * Client talks to server to access shortened url
+        * Server looks in cache to find the url
+        * Cache either return the url or tells server it does not have it
+        * If not in cache, server looks into database for the url
+        * If url exist, it sends it to the cache and server
+        * If url not found it tells the server it is not found
+        * If the url is not found server tells client no such url
+        * If url is found, server sends to module that checks if url is expired 
+        * If not expired, url is served to client 
+        * If expired, then no redirect to the url 
+
+* Load Balancer 
+    - Can add load balancing layers at three places in our system 
+        * Between clients and application servers 
+        * Between application servers and database servers 
+        * Between application servers and cache servers 
+    - Could use round robin approach initally 
+      --> problems with load balancing 
+    - Could use smarter approach which tests to see how load is being balanced
+      and what server could handle more load 
+
+* Purging or DB cleanup
+    - Should entries stick around forever? Or should they be purged?
+    - If user specified expritation time is reached, what should happ to link?
+    - Active search to remove links would be expensive. Do lazy clean up instead.
+    - Make sure expired links are never returned to users, but don't have to
+      delete them immediately as they expire. 
+    - Whenever user tries to access expired link, we can delete the link and return
+      error to the user. 
+    - Seperate cleanup service can run periodically to remove expired links from our
+      storage and cache. The service should be lightweight and can be scheduled 
+      to run only when the user traffic is expected to be low. 
+    - We can have default expiration link for each link (i.e. 2 years)
+    - After removing expired link, we can put key back in key-db to be reused.
+    - Should we remove links that haven't been used in some length of time? 6 months?
+      --> tricky ... since storage is cheap we can just keep the links.
+
+    client  <--> LB <--> server <---> LB <--->  cache 
+        ^            |      |          ^             ^
+        |            |      |          |             |
+        |            |      |          |             |
+        |            |      |          |             |
+         Has URL <---|      |          |---------> database
+          expired?          v                        ^
+                    key generation service           |        
+                            |                        |
+                            |                        |
+                            v                        |
+    key-db standby <------ key-db  <-----------clean up service    
+
+* Telemetry
+    - How many times has a short URL been used? 
+    - What were user locations?
+    - How to store statistics 
+    - If this statistics is part of DB row that gets updated on each view
+      what happens when URL is slamed with a large number of concurrent requests?
+    - Some statistics worth tracking:
+        * country, data, time, web page that referred click, browser,
+          platform from which page was accessed 
+
+* Security and Permissions 
+    - Can users create private URLS or allow a particular set of users access 
+      to the urls?
+    - We could store permission level with each URL in the database. 
+    - We can also create a seperate table to store UserIDs that have permission
+      to see a specific URL. 
+    - If a user does not have permission and tries to access a URL, we can sends
+      an HTTP 401 back (unauthorized client). 
+    - Given that we are storing our data in NoSQL wide-column database like 
+      Cassandra, the key for the table storing permissions would be the
+      'Hash' (or the KGS generated 'key'). The colums will store the UserIDs
+      of those users that have permission to see the URL. 
+
+
+
+

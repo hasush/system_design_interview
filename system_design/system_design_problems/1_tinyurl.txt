@@ -1,0 +1,366 @@
+* Designing a URL (Uniform Resource Locator) shortening service like TinyURL
+
+* Why do we need URL shortening?
+    - Make long URL shorter -> "short link"
+    - Redirect the short link to the original URL
+    - We save space when displayed, shared, messaged, tweeted, etc.
+    - Users also have to type less and will make less mistakes 
+    - Example: Both point to same resource 
+        * long: https://www.educative.io/collection/page/5668639101419520/5649050225344512/5668600916475904/
+        * short: http://tinyurl.com/jlg8zpc 
+    - Uses:
+        * optimize links across devices 
+        * track individual links to analyze audience 
+        * measure ad campaign performance
+        * hide affiliated original URLs
+
+
+
+* Requirements and Goals of the System
+### You should always clarify requirements at the beginning of the interview.
+### Be sure to ask questions to find the exact scope of the system that 
+### the interviewer has in mind.
+    - Url shortening system should meet the following requirements:
+    - Functional Requirements
+        * Given a URL, service should generate a shorter unique alias for it.
+          The short link should be small enough to be easily copied and pasted in
+          applications.
+        * Short link should redirect to longer original link
+        * Users should be able to choose custome short link
+        * Links will expire after default timespan. Users should be able to 
+          specify the time span.
+    - Non-Functional Requirements
+        * System must be highly available. If system is down then all URL redirection
+          will fail. 
+        * URL redirection should happen in real time with minimial latency 
+        * Shortened links should not be guessable (not predictable)
+    - Extended Requirements 
+        * Analytics: how many times does a redirection happen?
+        * Our service should be accessible through REST (Representational State Transfer)
+          APIs (Application Programming Interface) by other services.
+
+* Capacity Estimation and Constraints
+    - System will be read-heavy: more redirection requests than new URLs.
+      Assume a 100:1 ratio of read/write 
+    - Traffic Estimates:
+        * 500e6 new url shortenings per month 
+          --> 500e6*100 = 50e9 redirections per month
+        * Queries/Second (number of new url/second)?
+          --> 500e6/(30days*24hours*3600seconds) ~= 200 URLS/s 
+        * redirections/Second
+          --> 20000/second (20k/s)
+    - Storage Estimates:
+        * Assume store for 5 years:
+          --> 5 years*12*500e6 = 30e9 urls 
+        * Assume each URL is 500 bytes 
+          --> 30e9 * 500 = 15000e9=15e12 terabytes
+    - Bandwidth Estimates:
+        * write requests:
+            - 200 urls/second*500 bytes = 100000 ~=100kB/s
+        * read requests:
+            - 20k/s * 500 bytes = 10000k/s ~= 10MB/s
+    - Memory Estimates:
+        * 80/20 rules: 20% of urls is 80% of traffic 
+        * Cache 20% of hot urls 
+        * 20k requests/s --> 20k/s*3600*24=20000*100000 ~= 2 billion requests/day
+        * 2 billion*0.2*500 bytes = 200 GB 
+    - Summary
+        New URLs	        200/s
+        URL redirections	20K/s
+        Incoming data	    100KB/s
+        Outgoing data	    10MB/s
+        Storage for 5 years	15TB
+        Memory for cache	170GB (or 200 GB)
+
+* System APIs
+### Once we have finalized the requirements, it's always a good idea to define the
+### the system APIs. This should explicitly state what is expected from the system.
+    - Can create SOAP (Simple Object Access Protocol) or REST APIs to expose
+      the functionality of our service.
+    - createUrl(api_dev_key, original_url, custom_alias=None, user_name=None, expire_date=None)
+        * api_dev_key (string): The API developer key of a registered account.
+                                Will be used to throttle users based on their allocated
+                                quota as well as other things.
+        * original_url (string): original URL to be Shortened
+        * custom_alias (string): Optional custom key for the URL.
+        * user_name (string): Optional user name to be used in the encoding.
+        * expire_date (string): Optional expiration date of the shortened URL
+        * Return: shortened url or error code
+    - deleteURL(api_dev_key, url_key)
+        * url_key: string representing the shortened URL to be retrieved
+        * Return: "URL Removed" or error code
+    - How to detect and prevent abuse?
+        * Malicious user can consume all URL keys and put us out of business 
+        * To prevent abuse, limit users via their api_dev_key. Each api_dev_key
+          can be limited to a certain number of URL creations and redirections per
+          some time period (which may be different for each developer key).
+
+* Database Design
+### Defining the DB schema in early stages of the interview would help to understand
+### the data flow among various componenets and later would guide towards data
+### partitioning.
+    - A few observations about the nature of the data we will store:
+        * We need to store billions of records
+        * Each object we store is small (less than 1kB)
+        * There are no relationships between records - other than storing
+          which user created a URL
+        * Our service is read-heavy
+    - Database schema 
+        * Need two tables, one for storing information about the URL mapping
+          and one for the user's data who created the shortened link
+            -       URL
+                PK  Hash:varchar(16)
+                    OriginalURL: varchar(512)
+                    CreationDate: datetime
+                    ExpirationDate: datetime
+                    userID: int
+
+            -       User
+                PK  UserID: int
+                    Name: varchar(20)
+                    Email: varchar(32)
+                    CreationDate: datetime
+                    LastLogin: datetime
+
+        * What kind of databse should we use?
+            - Anticipate billions of rows and don't need relationship information
+              --> NoSQL i.e. DyanmoDB, Cassandra, Riak are good choices
+            - NoSQL choice is easier to scale 
+
+* Basic System Design and Algorithm
+    - The problem we are solving is how to generate a short and unique key for
+      a given URL.
+    - Encoding actual URL
+        * We can compuate a unique hash (i.e. MD5 or SHA252 etc.) of the givel URL.
+        * The hash can be encoded for display.
+        * Can use base 36/62/64 encoding 
+        * What should should be reasonable length of short keys? 6,8,10 chars?
+        * base 64 and 6 chars --> 64**6=68.7e9 possible strings 
+        * If using MD5 --> 128 bit hash ... for base 64 encoding of 6 character
+          string results in 128//6=21 character string (6 bits per character).
+        * How to choose only 6 characters of the 21?
+          --> conflicts and key duplication might arise if we use say first 6 characters 
+        * Issues with this solution:
+            - If multiple users enter same URL --> will get same shortened URL
+              --> unacceptable 
+            - URL encodings
+                http://www.educative.io/distributed.php?id=design
+                and
+                http://www.educative.io/distributed.php%3Fid%3Ddesign 
+                are identical except for the URL encoding.
+        * Workaround for the Issues
+            - Append URL with increasing sequence number and generate hash 
+                * overflow for sequence number?
+                * performance of service 
+            - Append URL with (unique) user id.
+                * If user has not signed in, will have to ask for uniqueness key
+                * Even with this solution, if we have a conflict, we have to keep
+                  generating a key until we get a unique one 
+        * See tinyurl_figure1.png for diagram of process 
+        client --- have url request ---> server --- encode request ---> encoder
+               <--- shortened url ------    ^       or append sequene      |
+                                            |        and encode            |
+                                            |                              |
+                                            |                           store encoded 
+                                            |                             url
+                                            |                              |
+                                            |                              |
+                                            |                              v
+                                          failure due to duplication----database
+                                          or successfully inserted 
+
+
+    - Generating keys offline
+        * Standalone KGS (Key Generation Service) 
+            - randomly generate six-ltter strings beforehand and stores them
+              in data base: Key Database (Key-DB)
+            - Whenever we want to generate a URL, take one of the pre generated 
+              keys and serve it
+            - This approach makes things simple and fast 
+            - Do not have to worry about encoding the URL and do not have to worry
+              about duplications and collisions 
+            - KGS will make sure all keys inserted into Key-DB are unique 
+        * Concurrency problems?
+            - As soon as key is used, it should be marked in database to ensure
+              that it is not used again. 
+            - If multiple servers reading from key-DB ... might have situation
+              where they both try to read the same key. 
+            - Servers can use KGS to read/mark keys in the key-db. 
+            - KGS can use two tables: marked and unmarked
+            - As soon as KGS servers a key, it moves it to the marked table 
+            - KGS can always keep some keys in memory to serve them quickly 
+                * For simplicity, as soon as KGS loads keys into memory it can 
+                  move them to the used table.
+                * This ensures each server gets unique keys. 
+                * If KGS dies before serving the keys, it is ok as there are
+                  64**6~=68.7e9 keys that are servable 
+            - KGS must make sure to synchronize (i.e. lock) on data structure
+              holding keys before serving them 
+        * What would be the size of the key-db?
+            6 (charactesr per key) * 64**6 (unique keys) ~= 412 GB 
+        * Is KGS a single point of failure?
+            - Yes
+            - Have standby replicas of KGS 
+            - When primary server dies, backups go online 
+        * Can each app server cache some keys from key-db?
+            - Yes
+            - Would speed things up
+            - Cached keys would be lost if failure, but that is ok as 64**6 keys.
+        * How would we perform a key lookup?
+            - We can lookup key in databse to get the full URL. 
+            - If present in the databse, issue "HTTP 302 Redirect" status back to 
+              the browser passing the URL in the 'location' field of the request.
+            - If key not present, issue "HTTP 404 Not Found" status or redirect
+              user to homepage. 
+        * Should we impose size limits on custom aliases?
+            - Yes, give ability to use custom alias but limit. I.E. 16 character
+              asin the table above in "Database schema"
+
+        * High level design for url shortening (see figure tinyurl_figure2.png)
+          
+          client <---> application server <--- key generating service 
+                               ^                         ^
+                               |                         |
+                               |                         |
+                               |                         |
+                               v                         v
+                            database                    key-db
+
+
+* Data partitioning and Replication
+    - To scale out our DB, we need to partition it so that it can store information 
+      about billions of URLs
+    - Need partitioning scheme that would divide and store our data into different
+      DB servers 
+    - Range Based Partitioning
+        * Store urls based on hash val's first character 
+        * can combine less frequent letters 
+        * data inbalance issues 
+    - Hash based partitioning
+        * Take hash of the value we are storing then put in partition 
+          of that hash val. 
+        * Can still lead to overloaded partitions --> consistent hashing 
+
+* Cache 
+    - We can cache frequently used URLs 
+    - i.e. use Memcached application 
+    - Before hitting the backend servers, can quickly see if key/long url 
+      is in the cache 
+    - How much memory should we have?
+        * We could start with 20% of daily traffic, and based on clients' usage
+          patterns we can adjust how many cache servers we need. 
+        * Would need abou 200 GB to cache 20% of traffic and modern 
+          server would have 256 GB memory so easy enough to hold cache in one machine
+    - Which cache eviction policy would best fit our needs?
+        * LRU is good ... evict oldest members from the cache 
+        * Could use Linked Hash Map 
+        * Can replicate caching servesr to distribute the load between them 
+    - How can cache replica be updated?
+        * Whenever there is cache miss, application server would hitting backend
+          database. 
+        * Whenever this happens, we can update the cache and pass the new 
+          entry to all the cache replicas.
+        * Each replica then updates its entry, if it already has it, 
+          then it ignores it.
+
+    client  <----> server <------>  cache 
+        ^            |  ^             ^
+        |            |  |             |
+        |            |  |             |
+        |            |  |             |
+         Has URL <---|  |---------> database
+          expired?
+
+    - Order of operations (tinyurl_figure3.png )
+        * Client talks to server to access shortened url
+        * Server looks in cache to find the url
+        * Cache either return the url or tells server it does not have it
+        * If not in cache, server looks into database for the url
+        * If url exist, it sends it to the cache and server
+        * If url not found it tells the server it is not found
+        * If the url is not found server tells client no such url
+        * If url is found, server sends to module that checks if url is expired 
+        * If not expired, url is served to client 
+        * If expired, then no redirect to the url 
+
+* Load Balancer 
+    - Can add load balancing layers at three places in our system 
+        * Between clients and application servers 
+        * Between application servers and database servers 
+        * Between application servers and cache servers 
+    - Could use round robin approach initally 
+      --> problems with load balancing 
+    - Could use smarter approach which tests to see how load is being balanced
+      and what server could handle more load 
+
+* Purging or DB cleanup
+    - Should entries stick around forever? Or should they be purged?
+    - If user specified expritation time is reached, what should happ to link?
+    - Active search to remove links would be expensive. Do lazy clean up instead.
+    - Make sure expired links are never returned to users, but don't have to
+      delete them immediately as they expire. 
+    - Whenever user tries to access expired link, we can delete the link and return
+      error to the user. 
+    - Seperate cleanup service can run periodically to remove expired links from our
+      storage and cache. The service should be lightweight and can be scheduled 
+      to run only when the user traffic is expected to be low. 
+    - We can have default expiration link for each link (i.e. 2 years)
+    - After removing expired link, we can put key back in key-db to be reused.
+    - Should we remove links that haven't been used in some length of time? 6 months?
+      --> tricky ... since storage is cheap we can just keep the links.
+
+    client  <--> LB <--> server <---> LB <--->  cache 
+        ^            |      |          ^             ^
+        |            |      |          |             |
+        |            |      |          |             |
+        |            |      |          |             |
+         Has URL <---|      |          |---------> database
+          expired?          v                        ^
+                    key generation service           |        
+                            |                        |
+                            |                        |
+                            v                        |
+    key-db standby <------ key-db  <-----------clean up service    
+
+* Telemetry
+    - How many times has a short URL been used? 
+    - What were user locations?
+    - How to store statistics 
+    - If this statistics is part of DB row that gets updated on each view
+      what happens when URL is slamed with a large number of concurrent requests?
+    - Some statistics worth tracking:
+        * country, data, time, web page that referred click, browser,
+          platform from which page was accessed 
+
+* Security and Permissions 
+    - Can users create private URLS or allow a particular set of users access 
+      to the urls?
+    - We could store permission level with each URL in the database. 
+    - We can also create a seperate table to store UserIDs that have permission
+      to see a specific URL. 
+    - If a user does not have permission and tries to access a URL, we can sends
+      an HTTP 401 back (unauthorized client). 
+    - Given that we are storing our data in NoSQL wide-column database like 
+      Cassandra, the key for the table storing permissions would be the
+      'Hash' (or the KGS generated 'key'). The colums will store the UserIDs
+      of those users that have permission to see the URL. 
+
+    
+    
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+            
+        
+

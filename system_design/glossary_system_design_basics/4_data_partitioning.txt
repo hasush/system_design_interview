@@ -1,0 +1,91 @@
+* Data partitioning breaks up a large data base into smaller parts
+    - split DB across multiple machines to improve 
+        * manageabilitiy, performance, availability, and load balancing
+    - at some point, better to scale horizontally than vertically
+
+* Partitioning Methods
+    - Horizontal Partitioning
+        * Partition rows based on some value
+        * i.e. ZIP >= ZIP_VAL
+        * Problem would be if unbalanced ... new york vs. mississippi
+    - Vertical Partitioning
+        * Partition such that different databases have different features
+        * Problem would be individual server lacks capacity for all data
+          (single server can't handle metadata queries of 10 billion photos from
+           140 million users.)
+    - Directory Based Partitioning
+        * Lookup service which knows the partitioning scheme 
+        * To find out where particular data entry resides, query the
+          directory server that holds the mapping between each tuple key to its DB
+          server. 
+        * Loosely coupled approach allows us to perform tasks like adding servers
+          to DB pool or changing partitioning scheme without having impact on
+          the application.
+
+* Partitioning Criteria
+    - Key or Hash Partitioning
+        * simple -> 100 servers: instance gets mapped to hash value instance%100
+          but everything must be remappped if we add a server or server fails
+        * better: consistent hashing: unit circle: only num_keys/num_slots to change
+    - List Partitioning
+        * Predefine which keys go in which servers
+        * i.e. Iceland,Norway,Sweden,Finland,Denmark users get mapped to one server
+    - Round-Robin Partitioning
+        * every instance gets mapped to instance%num_servers
+        * note this is different than Key/Hash partitioning because there is no key
+          or hash value that the instance is mapped to, every instance just gets
+          distributed evenly
+    - Composite Partitioning
+        * Combine the above partition schemes
+        * i.e. list partitioning + hash partitioning 
+
+* Common Problems of Data Partitioning
+    - After one partitions a database, there are constraints on the different 
+      operations that can be performed. This is due to the fact that operations
+      across multiple tables or multiples rows in the same table will no longer
+      be on the same server.
+    - Joins and Denormalization
+        * Join on database on one server -> straightforward
+          Not feasible to perform joins that span database partitions
+          --> Highly inefficient to get data from multiple servers
+        * Can denormalize the databse -> must deal with perils of Denormalization
+          and data inconsistency 
+        * normalization -> try to make less redundant data 
+          i.e. teacher name table and courses table and then join them when we need
+        * denormalization adds redundant data 
+        * Pros of Denormalization
+            - Retrieving data is faster since we do fewer joins
+            - Queries to retrieve can be simpler(and therefore less likely to have bugs), 
+              since we need to look at fewer tables.
+        * Cons of Denormalization 
+            - Updates and inserts are more expensive.
+            - Denormalization can make update and insert code harder to write.
+            - Data may be inconsistent . Which is the “correct” value for a piece of data?
+            - Data redundancy necessitates more storage
+    - Referential integrity
+        * Forcing data integrity constraints such as foreign keys in
+          partiontined database is difficult 
+        * For example, a typical foreign key constraint might state 
+          that every employee in the EMPLOYEE table must be a member 
+          of an existing department, as defined in the DEPARTMENT table.
+        * Most relational databases do not support foreign keys constraints 
+          across databases on different database servers
+        * Thus in order to have referential integrity, must implement that logic
+          in the application code. 
+        * Must then run regular SQL code to clean up dangling references.
+    - Rebalancing
+        * Some reasons to change data partitioning scheme
+            - Partitioning is not uniform: i.e. ZIP code example leads to inbalance
+            - There is a lot of load on a partition: i.e. photo partition 
+              has too many requests
+        * This results in 
+            - rebalancing 
+            - creating more partitions 
+            - all data must move
+            - doing this without taking servers offline is difficult
+            - directory based partitioning makes this easier
+              but causes the existence of a more complicated system 
+              and creates a new single point of failure 
+
+
+
